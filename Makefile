@@ -1,4 +1,4 @@
-test: test.c
-		gcc -std=gnu99 test.c cJSON.h cJSON.c libJWT.c -g -o test -lssl -lcrypto -lm
+test: 
+		gcc test.c cJSON.c libJWT.c -g -o test -lssl -lcrypto -lm -I/usr/local/opt/openssl/include -L/usr/local/opt/openssl/lib
 clean:
 		rm -f test

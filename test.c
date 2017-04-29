@@ -258,7 +258,8 @@ int main(int argc, char **argv) {
     FILE *test1 = fopen("./server.pub", "r");
     FILE *test2 = fopen("./server.pub", "r");
 
-    rsa_read_public_key(test2, NULL, ALG_RS256);
+    char *jwk_pub = rsa_read_public_key(test2, NULL, ALG_RS256);
+    printf("jwk_pub: %s\n", jwk_pub);
     
     /* open key files */
     FILE *KEY_FILE = fopen("./server.key", "r");

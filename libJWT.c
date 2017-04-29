@@ -381,21 +381,24 @@ BN_to_base64_str(BIGNUM *bn, char *out) {
     out[dst.len] = '\0';
 }
 
-char *
-rsa_read_public_key(FILE *pk, char *kid, libjwt_alg_t *rsa_alg) {
-    RSA *rsa_pk = PEM_read_RSA_PUBKEY(pk, NULL, NULL, NULL);
-    if(UNLIKELY(!rsa_pk)) {
-        return NULL;
-    }
-    cJSON *jwk_json = cJSON_CreateObject();
+inline static void
+make_jwk_common(cJSON *jwk_json, const char *kty, char *kid, libjwt_alg_t *rsa_alg) {
     /* kty, key type, required */
-    cJSON_AddStringToObject(jwk_json, "kty", "RSA");
+    cJSON_AddStringToObject(jwk_json, "kty", kty);
     
     /* alg, algorithm, optional */
     if(LIKELY(kid != NULL)) {
         cJSON_AddStringToObject(jwk_json, "kid", kid);
     }
     
+    /* alg, optional */
+    if(!rsa_alg) {
+        cJSON_AddStringToObject(jwk_json, "alg", ALG_STR[*rsa_alg]);
+    }
+}
+
+inline static void
+make_jwk_public(cJSON *jwk_json, RSA *rsa_pk) {
     /* n, Modulus, required */
     BIGNUM *n = rsa_pk->n;
     char n_hash[BN_base64_encoded_length(n) + 1];
@@ -407,13 +410,54 @@ rsa_read_public_key(FILE *pk, char *kid, libjwt_alg_t *rsa_alg) {
     char e_hash[BN_base64_encoded_length(n) + 1];
     BN_to_base64_str(e, e_hash);
     cJSON_AddStringToObject(jwk_json, "e", e_hash);
+}
+
+inline static void
+make_jwk_private(cJSON *jwk_json, RSA *rsa_pk) {
+    /* d, Private Exponent, required */
+    BIGNUM *d = rsa_pk->d;
+    char d_hash[BN_base64_encoded_length(d) + 1];
+    BN_to_base64_str(d, d_hash);
+    cJSON_AddStringToObject(jwk_json, "d", d_hash);
     
-    /* alg, optional */
-    if(!rsa_alg) {
-        cJSON_AddStringToObject(jwk_json, "alg", ALG_STR[*rsa_alg]);
+    /* p, First Prime Factor, required */
+    BIGNUM *p = rsa_pk->p;
+    char p_hash[BN_base64_encoded_length(p) + 1];
+    BN_to_base64_str(p, p_hash);
+    cJSON_AddStringToObject(jwk_json, "p", p_hash);
+    
+    /* q, Second Prime Factor */
+    BIGNUM *q = rsa_pk->q;
+    char q_hash[BN_base64_encoded_length(q) + 1];
+    BN_to_base64_str(q, q_hash);
+    cJSON_AddStringToObject(jwk_json, "q", q_hash);
+}
+
+char *
+rsa_read_public_key(FILE *pk, char *kid, libjwt_alg_t *rsa_alg) {
+    RSA *rsa_pk = PEM_read_RSA_PUBKEY(pk, NULL, NULL, NULL);
+    if(UNLIKELY(!rsa_pk)) {
+        return NULL;
     }
+    cJSON *jwk_json = cJSON_CreateObject();
+    make_jwk_common(jwk_json, "RSA", kid, rsa_alg);
+    make_jwk_public(jwk_json, rsa_pk);
+    
     char *res = cJSON_PrintUnformatted(jwk_json);
     cJSON_Delete(jwk_json);
     return res;
+}
+
+char *
+rsa_read_private_key(FILE *pk, char *kid, libjwt_alg_t *rsa_alg) {
+    RSA *rsa_pk = PEM_read_RSAPrivateKey(pk, NULL, NULL, NULL);
+    if(UNLIKELY(!rsa_pk)) {
+        return NULL;
+    }
+    cJSON *jwk_json = cJSON_CreateObject();
+    make_jwk_common(jwk_json, "RSA", kid, rsa_alg);
+    make_jwk_public(jwk_json, rsa_pk);
+    
+    
 }
 
