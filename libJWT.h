@@ -18,22 +18,25 @@ static const char *ALG_STR[] = {
     "none", "RS256", "RS384", "RS512"
 };
 
-typedef int (*set_jwk_t)(char *jwk_str);
-typedef int (*set_alg_t)(libjwt_alg_t a);
-typedef int (*set_payload_t)(char *payload_str);
-typedef char *(*sign_t)();
-typedef int (*verify_t)(char *jwt_str);
+struct libjwt;
+typedef struct libjwt libjwt_t;
+
+typedef int (*set_jwk_t)(libjwt_t *jwt, char *jwk_str);
+typedef int (*set_alg_t)(libjwt_t *jwt, libjwt_alg_t a);
+typedef int (*set_payload_t)(libjwt_t *jwt, char *payload_str);
+typedef char *(*sign_t)(libjwt_t *jwt);
+typedef int (*verify_t)(libjwt_t *jwt, char *jwt_str);
     
-typedef struct {
+struct libjwt {
     EVP_PKEY *key;
     libjwt_alg_t alg;
     char *payload;
-    set_jwk_t *set_jwt;
+    set_jwk_t *set_jwk;
     set_alg_t *set_alg;
     set_payload_t *set_payload;
     sign_t *sign;
     verify_t *verify;
-} libjwt_t;
+};
 
 extern libjwt_t *jwt_create();
 extern void jwt_release(libjwt_t *jwt);

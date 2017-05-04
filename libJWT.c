@@ -26,6 +26,7 @@ typedef struct {
 #define base64_decoded_length(len)  (((len + 3) / 4) * 3)
 
 #define BN_base64_encoded_length(bn) (base64_encoded_length(BN_num_bytes(bn)))
+#define BN_base64_decoded_length(hash) (base64_decoded_length(strlen(hash)))
 
 static void
 encode_base64_internal(str_t *dst, str_t *src, const u_char *basis,
@@ -114,7 +115,7 @@ decode_base64_internal(str_t *dst, str_t *src, const u_char *basis) {
 }
 
 static int
-ngx_decode_base64(str_t *dst, str_t *src) {
+decode_base64(str_t *dst, str_t *src) {
     static u_char basis64[] = {
         77, 77, 77, 77, 77, 77, 77, 77, 77, 77, 77, 77, 77, 77, 77, 77,
         77, 77, 77, 77, 77, 77, 77, 77, 77, 77, 77, 77, 77, 77, 77, 77,
@@ -258,6 +259,110 @@ token_verify(str_t *token, EVP_PKEY *key) {
     return ret;
 }
 
+inline static int
+BN_to_base64_str(BIGNUM *bn, char *out) {
+    str_t dst = {
+        .data = out,
+        .len = 0
+    };
+    int src_len = BN_num_bytes(bn);
+    char src_data[src_len];
+    BN_bn2bin(bn, src_data);
+    str_t src = {
+        .data = src_data,
+        .len = src_len
+    };
+    encode_base64url(&dst, &src);
+    out[dst.len] = '\0';
+}
+
+inline static BIGNUM *
+base64_str_to_BN(char *hash) {
+    int hash_str_len = strlen(hash);
+    str_t hash_str = {
+        .data = hash,
+        .len = hash_str_len
+    };
+    int src_len = base64_decoded_length(hash_str_len);
+    char src[src_len];
+    str_t src_str = {
+        .data = src,
+        .len = src_len
+    };
+    decode_base64url(src_str, hash_str);
+    return BN_bin2bn(src_str.data, src_str.len, NULL);
+}
+
+inline static void
+make_jwk_common(cJSON *jwk_json, const char *kty, char *kid, libjwt_alg_t *rsa_alg) {
+    /* kty, key type, required */
+    cJSON_AddStringToObject(jwk_json, "kty", kty);
+    
+    /* alg, algorithm, optional */
+    if(LIKELY(kid != NULL)) {
+        cJSON_AddStringToObject(jwk_json, "kid", kid);
+    }
+    
+    /* alg, optional */
+    if(!rsa_alg) {
+        cJSON_AddStringToObject(jwk_json, "alg", ALG_STR[*rsa_alg]);
+    }
+}
+
+inline static void
+make_jwk_public(cJSON *jwk_json, RSA *rsa_pk) {
+    /* n, Modulus, required */
+    BIGNUM *n = rsa_pk->n;
+    char n_hash[BN_base64_encoded_length(n) + 1];
+    BN_to_base64_str(n, n_hash);
+    cJSON_AddStringToObject(jwk_json, "n", n_hash);
+    
+    /* e, Exponent, required */
+    BIGNUM *e = rsa_pk->e;
+    char e_hash[BN_base64_encoded_length(n) + 1];
+    BN_to_base64_str(e, e_hash);
+    cJSON_AddStringToObject(jwk_json, "e", e_hash);
+}
+
+inline static void
+make_jwk_private(cJSON *jwk_json, RSA *rsa_pk) {
+    /* d, Private Exponent, required */
+    BIGNUM *d = rsa_pk->d;
+    char d_hash[BN_base64_encoded_length(d) + 1];
+    BN_to_base64_str(d, d_hash);
+    cJSON_AddStringToObject(jwk_json, "d", d_hash);
+    
+    /* p, First Prime Factor, required */
+    BIGNUM *p = rsa_pk->p;
+    char p_hash[BN_base64_encoded_length(p) + 1];
+    BN_to_base64_str(p, p_hash);
+    cJSON_AddStringToObject(jwk_json, "p", p_hash);
+    
+    /* q, Second Prime Factor */
+    BIGNUM *q = rsa_pk->q;
+    char q_hash[BN_base64_encoded_length(q) + 1];
+    BN_to_base64_str(q, q_hash);
+    cJSON_AddStringToObject(jwk_json, "q", q_hash);
+    
+    /* dp, First Factor CRT Exponent, required */
+    BIGNUM *dp = rsa_pk->dmp1;
+    char dp_hash[BN_base64_encoded_length(dp) + 1];
+    BN_to_base64_str(dp, dp_hash);
+    cJSON_AddStringToObject(jwk_json, "dp", dp_hash);
+    
+    /* dq, Second Factor CRT Exponent, required */
+    BIGNUM *dq = rsa_pk->dmq1;
+    char dq_hash[BN_base64_encoded_length(dq) + 1];
+    BN_to_base64_str(dq, dq_hash);
+    cJSON_AddStringToObject(jwk_json, "dq", dq_hash);
+    
+    /* qi, First CRT Coefficient, required */
+    BIGNUM *qi = rsa_pk->iqmp;
+    char qi_hash[BN_base64_encoded_length(qi) + 1];
+    BN_to_base64_str(qi, qi_hash);
+    cJSON_AddStringToObject(jwk_json, "qi", qi_hash);
+}
+
 
 int 
 jwt_load_pub(libjwt_t *jwt, const char *key_file) {
@@ -364,75 +469,6 @@ jwt_verify(libjwt_t *jwt, const char *token) {
     return token_verify(&bearer_token, jwt->key);
 }
 
-static int
-BN_to_base64_str(BIGNUM *bn, char *out) {
-    str_t dst = {
-        .data = out,
-        .len = 0
-    };
-    int src_len = BN_num_bytes(bn);
-    char src_data[src_len];
-    BN_bn2bin(bn, src_data);
-    str_t src = {
-        .data = src_data,
-        .len = src_len
-    };
-    encode_base64url(&dst, &src);
-    out[dst.len] = '\0';
-}
-
-inline static void
-make_jwk_common(cJSON *jwk_json, const char *kty, char *kid, libjwt_alg_t *rsa_alg) {
-    /* kty, key type, required */
-    cJSON_AddStringToObject(jwk_json, "kty", kty);
-    
-    /* alg, algorithm, optional */
-    if(LIKELY(kid != NULL)) {
-        cJSON_AddStringToObject(jwk_json, "kid", kid);
-    }
-    
-    /* alg, optional */
-    if(!rsa_alg) {
-        cJSON_AddStringToObject(jwk_json, "alg", ALG_STR[*rsa_alg]);
-    }
-}
-
-inline static void
-make_jwk_public(cJSON *jwk_json, RSA *rsa_pk) {
-    /* n, Modulus, required */
-    BIGNUM *n = rsa_pk->n;
-    char n_hash[BN_base64_encoded_length(n) + 1];
-    BN_to_base64_str(n, n_hash);
-    cJSON_AddStringToObject(jwk_json, "n", n_hash);
-    
-    /* e, Exponent, required */
-    BIGNUM *e = rsa_pk->e;
-    char e_hash[BN_base64_encoded_length(n) + 1];
-    BN_to_base64_str(e, e_hash);
-    cJSON_AddStringToObject(jwk_json, "e", e_hash);
-}
-
-inline static void
-make_jwk_private(cJSON *jwk_json, RSA *rsa_pk) {
-    /* d, Private Exponent, required */
-    BIGNUM *d = rsa_pk->d;
-    char d_hash[BN_base64_encoded_length(d) + 1];
-    BN_to_base64_str(d, d_hash);
-    cJSON_AddStringToObject(jwk_json, "d", d_hash);
-    
-    /* p, First Prime Factor, required */
-    BIGNUM *p = rsa_pk->p;
-    char p_hash[BN_base64_encoded_length(p) + 1];
-    BN_to_base64_str(p, p_hash);
-    cJSON_AddStringToObject(jwk_json, "p", p_hash);
-    
-    /* q, Second Prime Factor */
-    BIGNUM *q = rsa_pk->q;
-    char q_hash[BN_base64_encoded_length(q) + 1];
-    BN_to_base64_str(q, q_hash);
-    cJSON_AddStringToObject(jwk_json, "q", q_hash);
-}
-
 char *
 rsa_read_public_key(FILE *pk, char *kid, libjwt_alg_t *rsa_alg) {
     RSA *rsa_pk = PEM_read_RSA_PUBKEY(pk, NULL, NULL, NULL);
@@ -457,7 +493,54 @@ rsa_read_private_key(FILE *pk, char *kid, libjwt_alg_t *rsa_alg) {
     cJSON *jwk_json = cJSON_CreateObject();
     make_jwk_common(jwk_json, "RSA", kid, rsa_alg);
     make_jwk_public(jwk_json, rsa_pk);
+    make_jwk_private(jwk_json, rsa_pk);
     
+    char *res = cJSON_PrintUnformatted(jwk_json);
+    cJSON_Delete(jwk_json);
+    return res;
+}
+
+int
+set_alg_fn(libjwt_t *jwt, libjwt_alg_t a) {
+    jwt->alg = a;
+    return 1;
+}
+
+int
+make_rsa_key(cJSON *jwk_json, RSA **rsap) {
+    RSA *key = RSA_new();
+    if(UNLIKELY(!key)) {
+        return -1;
+    }
+    cJSON *n_json = cJSON_GetObjectItem(jwk_json, "n");
+    if(UNLIKELY(!n_json) || UNLIKELY(!cJSON_IsString(jwk_json, "n"))) {
+        return -1;
+    }
+    char *n = n_json->valuestring;
     
 }
 
+int 
+set_jwk_t(libjwt_t *jwt, char *jwk_str) {
+    cJSON *jwk_json = cJSON_Parse(jwk_str);
+    if(UNLIKELY(!jwk_json)) {
+        return -1;
+    }
+    /* kty, required */
+    cJSON *kty_json = cJSON_GetObjectItem(jwk_json, "kty");
+    if(UNLIKELY(!kty_json) || UNLIKELY(!cJSON_IsString(jwk_json, "kty"))) {
+        return -1;
+    }
+    /* shoud be EC, RSA or oct, defined in Section 6.1 of [JWA] */
+    char *kty = kty_json->valuestring;
+    if(strncmp(kty, "EC", 2) == 0) {
+        /* EC */
+    }else if(strncmp(kty, "RSA", 3) == 0) {
+        /* RSA */
+        
+    }else if(strncmp(kty, "oct", 3) == 0) {
+        /* oct */
+    }else {
+        /* error */
+    }
+}
